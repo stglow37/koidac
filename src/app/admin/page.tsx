@@ -35,7 +35,7 @@ export default function AdminPage() {
       return
     }
 
-    const email = sessionData.data.session?.user?.email ?? null
+    const email = sessionData.session?.user?.email ?? null
     setUserEmail(email)
     const admin = !!email && ADMIN_EMAILS.includes(email.toLowerCase())
     setIsAdmin(admin)
