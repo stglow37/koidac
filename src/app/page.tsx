@@ -49,18 +49,26 @@ export default function Home() {
   }
 
   // --- 인증 관련 함수 ---
-  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000')
+  const baseUrl =
+    process.env.NEXT_PUBLIC_BASE_URL?.replace(/\/?$/, '') ??
+    (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000')
 
   const handleSignUp = async () => {
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: `${baseUrl}/`
-      }
-    })
-    if (error) alert("에러: " + error.message)
-    else alert('가입 확인 메일을 확인하거나 바로 로그인해보세요!')
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: `${baseUrl}`,
+        },
+      })
+      if (error) throw error
+      alert('가입 확인 메일을 확인하거나 바로 로그인해보세요!')
+    } catch (err) {
+      console.error('Supabase signUp error', err, { baseUrl, email })
+      if (err instanceof Error) alert('회원가입 실패: ' + err.message)
+      else alert('회원가입 실패: 알 수 없는 오류')
+    }
   }
 
   const handleSignIn = async () => {
