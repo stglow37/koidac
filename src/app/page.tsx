@@ -1,5 +1,6 @@
 ﻿'use client'
 
+import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { AuthForm } from '@/components/AuthForm'
@@ -21,6 +22,11 @@ export default function Home() {
   const [loading, setLoading] = useState(false)
 
   const { problems, loadingProblems, fetchProblemsWithRatings } = useProblems()
+
+  const adminEmails = process.env.NEXT_PUBLIC_ADMIN_EMAILS
+    ? process.env.NEXT_PUBLIC_ADMIN_EMAILS.split(',').map((email) => email.trim().toLowerCase())
+    : []
+  const isAdmin = user?.email ? adminEmails.includes(user.email.toLowerCase()) : false
 
   const filteredProblems = useMemo(() => {
     const query = searchTerm.trim().toLowerCase()
@@ -184,6 +190,11 @@ export default function Home() {
         {user && (
           <div className="flex items-center gap-4">
             <span className="text-sm font-medium">{user.email}</span>
+            {isAdmin && (
+              <Link href="/admin" className="text-sm text-blue-600 hover:underline">
+                관리자
+              </Link>
+            )}
             <button
               type="button"
               onClick={handleSignOut}
