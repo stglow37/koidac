@@ -1,61 +1,57 @@
-'use client'
+﻿'use client'
 
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { AuthForm } from '@/components/AuthForm'
+import { ProblemList } from '@/components/ProblemList'
+import { useProblems } from '@/hooks/useProblems'
 
 export default function Home() {
-  // --- 상태 관리 ---
   const [user, setUser] = useState<any>(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [problemId, setProblemId] = useState('')
   const [title, setTitle] = useState('')
-  const [problems, setProblems] = useState<any[]>([])
+  const [statusMessage, setStatusMessage] = useState<string | null>(null)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
-  // --- 로그인 상태 체크 ---
-  useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      setUser(session?.user ?? null)
-    })
-    fetchProblemsWithRatings()
-    return () => subscription.unsubscribe()
-  }, [])
+  const { problems, loadingProblems, fetchProblemsWithRatings } = useProblems()
 
-  // --- 데이터 불러오기 ---
-  const fetchProblemsWithRatings = async () => {
-    const { data: problemsData } = await supabase
-      .from('problems')
-      .select('*')
-      .order('created_at', { ascending: false })
-
-    if (problemsData) {
-      const updatedProblems = await Promise.all(
-        problemsData.map(async (p) => {
-          const { data: votes } = await supabase
-            .from('votes')
-            .select('rating')
-            .eq('problem_id', p.problem_id)
-          
-          const avg = votes && votes.length > 0 
-            ? (votes.reduce((acc, v) => acc + v.rating, 0) / votes.length).toFixed(1)
-            : '0.0'
-          
-          return { ...p, avgRating: avg, voteCount: votes?.length || 0 }
-        })
-      )
-      setProblems(updatedProblems)
-    }
-  }
-
-  // --- 인증 관련 함수 ---
   const baseUrl =
     process.env.NEXT_PUBLIC_BASE_URL?.replace(/\/?$/, '') ??
     (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000')
 
+  useEffect(() => {
+    async function initSession() {
+      const { data } = await supabase.auth.getSession()
+      setUser(data.session?.user ?? null)
+    }
+
+    initSession()
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      setUser(session?.user ?? null)
+    })
+
+    fetchProblemsWithRatings()
+    return () => subscription.unsubscribe()
+  }, [fetchProblemsWithRatings])
+
   const handleSignUp = async () => {
+    if (!email || !password) {
+      setErrorMessage('Please enter both email and password.')
+      return
+    }
+
+    setLoading(true)
+    setStatusMessage(null)
+    setErrorMessage(null)
+
     try {
-      const { data, error } = await supabase.auth.signUp({
+      const { error } = await supabase.auth.signUp({
         email,
         password,
         options: {
@@ -63,50 +59,91 @@ export default function Home() {
         },
       })
       if (error) throw error
-      alert('가입 확인 메일을 확인하거나 바로 로그인해보세요!')
+
+      setStatusMessage('Verification email sent. Please check your inbox.')
     } catch (err) {
       console.error('Supabase signUp error', err, { baseUrl, email })
-      if (err instanceof Error) alert('회원가입 실패: ' + err.message)
-      else alert('회원가입 실패: 알 수 없는 오류')
+      setErrorMessage(err instanceof Error ? err.message : 'Sign up failed.')
+    } finally {
+      setLoading(false)
     }
   }
 
   const handleSignIn = async () => {
+    if (!email || !password) {
+      setErrorMessage('Please enter both email and password.')
+      return
+    }
+
+    setLoading(true)
+    setStatusMessage(null)
+    setErrorMessage(null)
+
     const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) alert("로그인 실패: " + error.message)
+    if (error) {
+      setErrorMessage('Sign in failed: ' + error.message)
+    }
+
+    setLoading(false)
   }
 
   const handleSignOut = async () => {
     await supabase.auth.signOut()
+    setUser(null)
+    setStatusMessage('You have been signed out.')
   }
 
-  // --- 투표 및 등록 함수 ---
   const addProblem = async () => {
-    if (!problemId || !title) return alert('번호와 제목을 입력하세요!')
+    if (!problemId || !title) {
+      setErrorMessage('Please enter both problem number and title.')
+      return
+    }
+
+    setLoading(true)
+    setStatusMessage(null)
+    setErrorMessage(null)
+
     const { error } = await supabase
       .from('problems')
-      .insert([{ problem_id: Number(problemId), title: title }])
-    if (error) alert(error.message)
-    else { setProblemId(''); setTitle(''); fetchProblemsWithRatings() }
+      .insert([{ problem_id: Number(problemId), title }])
+
+    if (error) {
+      setErrorMessage(error.message)
+    } else {
+      setProblemId('')
+      setTitle('')
+      fetchProblemsWithRatings()
+      setStatusMessage('Problem registered successfully.')
+    }
+
+    setLoading(false)
   }
 
   const voteRating = async (pId: number, rating: number) => {
-    if (!user) return alert('로그인이 필요합니다!')
+    if (!user) {
+      setErrorMessage('You need to sign in first.')
+      return
+    }
+
     setLoading(true)
-    
-    // 유저 ID를 포함하여 투표 기록 (중복 투표 방지의 핵심)
+    setStatusMessage(null)
+    setErrorMessage(null)
+
     const { error } = await supabase
       .from('votes')
-      .insert([{ problem_id: pId, rating: rating, user_id: user.id }])
+      .insert([{ problem_id: pId, rating, user_id: user.id }])
 
     if (error) {
-      // 이미 투표한 경우 DB 제약 조건에 의해 에러가 발생함
-      if (error.code === '23505') alert('이미 이 문제에 투표하셨습니다!')
-      else alert('투표 실패: ' + error.message)
+      if (error.code === '23505') {
+        setErrorMessage('You already voted for this problem.')
+      } else {
+        setErrorMessage('Vote failed: ' + error.message)
+      }
     } else {
-      alert(`${rating}점으로 투표되었습니다!`)
+      setStatusMessage(`${rating} points registered successfully!`)
       fetchProblemsWithRatings()
     }
+
     setLoading(false)
   }
 
@@ -117,54 +154,75 @@ export default function Home() {
         {user && (
           <div className="flex items-center gap-4">
             <span className="text-sm font-medium">{user.email}</span>
-            <button onClick={handleSignOut} className="text-xs text-red-500 hover:underline">로그아웃</button>
+            <button
+              type="button"
+              onClick={handleSignOut}
+              className="text-xs text-red-500 hover:underline"
+            >
+              Sign out
+            </button>
           </div>
         )}
       </div>
 
       {!user ? (
-        <div className="bg-white p-8 rounded-2xl shadow-xl border max-w-md mx-auto">
-          <h2 className="text-xl font-bold mb-6 text-center">로그인 / 회원가입</h2>
-          <div className="space-y-4">
-            <input type="email" placeholder="학교 이메일" className="w-full p-3 border rounded-xl" onChange={(e) => setEmail(e.target.value)} />
-            <input type="password" placeholder="비밀번호" className="w-full p-3 border rounded-xl" onChange={(e) => setPassword(e.target.value)} />
-            <div className="flex gap-2">
-              <button onClick={handleSignIn} className="flex-1 bg-blue-600 text-white p-3 rounded-xl font-bold">로그인</button>
-              <button onClick={handleSignUp} className="flex-1 bg-gray-100 p-3 rounded-xl font-bold text-gray-600">회원가입</button>
-            </div>
-          </div>
-        </div>
+        <AuthForm
+          email={email}
+          password={password}
+          onEmailChange={setEmail}
+          onPasswordChange={setPassword}
+          onSignIn={handleSignIn}
+          onSignUp={handleSignUp}
+          loading={loading}
+          errorMessage={errorMessage}
+          statusMessage={statusMessage}
+        />
       ) : (
         <>
           <div className="bg-white shadow-sm p-6 rounded-2xl mb-10 border border-gray-100">
-            <h2 className="text-lg font-bold mb-4 text-gray-700">문제 제보하기</h2>
-            <div className="flex gap-3">
-              <input type="number" placeholder="번호" className="w-24 p-3 border rounded-xl bg-gray-50" value={problemId} onChange={(e) => setProblemId(e.target.value)} />
-              <input type="text" placeholder="문제 제목" className="flex-1 p-3 border rounded-xl bg-gray-50" value={title} onChange={(e) => setTitle(e.target.value)} />
-              <button onClick={addProblem} className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold">등록</button>
+            <h2 className="text-lg font-bold mb-4 text-gray-700">Submit a problem</h2>
+            <div className="flex gap-3 flex-col md:flex-row">
+              <input
+                type="number"
+                placeholder="Problem ID"
+                value={problemId}
+                onChange={(event) => setProblemId(event.target.value)}
+                className="w-full md:w-24 p-3 border rounded-xl bg-gray-50"
+              />
+              <input
+                type="text"
+                placeholder="Problem title"
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                className="flex-1 p-3 border rounded-xl bg-gray-50"
+              />
+              <button
+                type="button"
+                onClick={addProblem}
+                disabled={loading}
+                className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold disabled:opacity-50"
+              >
+                Add
+              </button>
             </div>
           </div>
 
-          <div className="space-y-4">
-            {problems.map((p) => (
-              <div key={p.id} className="bg-white p-5 rounded-2xl shadow-sm border flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="flex items-center gap-4">
-                  <div className="bg-blue-50 px-3 py-1 rounded text-blue-700 font-bold">{p.avgRating}</div>
-                  <div>
-                    <div className="text-xs text-gray-400">#{p.problem_id}</div>
-                    <div className="font-bold text-gray-800">{p.title}</div>
-                  </div>
-                </div>
-                <div className="flex gap-1">
-                  {[1, 2, 3, 4, 5].map((num) => (
-                    <button key={num} onClick={() => voteRating(p.problem_id, num)} disabled={loading} className="w-9 h-9 border rounded-lg hover:bg-yellow-400 transition-all font-medium text-sm">
-                      {num}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+          {statusMessage && (
+            <div className="mb-6 rounded-xl bg-green-50 border border-green-200 p-4 text-sm text-green-800">
+              {statusMessage}
+            </div>
+          )}
+          {errorMessage && (
+            <div className="mb-6 rounded-xl bg-red-50 border border-red-200 p-4 text-sm text-red-800">
+              {errorMessage}
+            </div>
+          )}
+
+          {loadingProblems ? (
+            <div className="text-center text-gray-500">Loading problems...</div>
+          ) : (
+            <ProblemList problems={problems} onVote={voteRating} loading={loading} />
+          )}
         </>
       )}
     </main>
