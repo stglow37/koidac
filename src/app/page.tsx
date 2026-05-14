@@ -1,10 +1,12 @@
 ﻿'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { AuthForm } from '@/components/AuthForm'
 import { ProblemList } from '@/components/ProblemList'
 import { useProblems } from '@/hooks/useProblems'
+
+type SortCriteria = 'latest' | 'difficulty-high' | 'difficulty-low' | 'votes-high'
 
 export default function Home() {
   const [user, setUser] = useState<any>(null)
@@ -12,11 +14,39 @@ export default function Home() {
   const [password, setPassword] = useState('')
   const [problemId, setProblemId] = useState('')
   const [title, setTitle] = useState('')
+  const [searchTerm, setSearchTerm] = useState('')
+  const [sortCriteria, setSortCriteria] = useState<SortCriteria>('latest')
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
   const { problems, loadingProblems, fetchProblemsWithRatings } = useProblems()
+
+  const filteredProblems = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase()
+
+    const filtered = query
+      ? problems.filter((problem) => {
+          const containsId = String(problem.problem_id).includes(query)
+          const containsTitle = problem.title.toLowerCase().includes(query)
+          return containsId || containsTitle
+        })
+      : problems
+
+    return [...filtered].sort((a, b) => {
+      switch (sortCriteria) {
+        case 'difficulty-high':
+          return Number(b.avgRating) - Number(a.avgRating)
+        case 'difficulty-low':
+          return Number(a.avgRating) - Number(b.avgRating)
+        case 'votes-high':
+          return b.voteCount - a.voteCount
+        case 'latest':
+        default:
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      }
+    })
+  }, [problems, searchTerm, sortCriteria])
 
   const baseUrl =
     process.env.NEXT_PUBLIC_BASE_URL?.replace(/\/?$/, '') ??
@@ -207,6 +237,33 @@ export default function Home() {
             </div>
           </div>
 
+          <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="relative flex-1">
+              <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-gray-400">🔍</span>
+              <input
+                type="text"
+                placeholder="문제 번호 또는 제목 검색"
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                className="w-full pl-10 p-3 border rounded-xl bg-white"
+              />
+            </div>
+            <div className="flex items-center gap-3">
+              <label htmlFor="sort" className="text-sm text-gray-600">정렬:</label>
+              <select
+                id="sort"
+                value={sortCriteria}
+                onChange={(event) => setSortCriteria(event.target.value as SortCriteria)}
+                className="p-3 border rounded-xl bg-white"
+              >
+                <option value="latest">최신순</option>
+                <option value="difficulty-high">난이도 높은순</option>
+                <option value="difficulty-low">난이도 낮은순</option>
+                <option value="votes-high">투표 많은순</option>
+              </select>
+            </div>
+          </div>
+
           {statusMessage && (
             <div className="mb-6 rounded-xl bg-green-50 border border-green-200 p-4 text-sm text-green-800">
               {statusMessage}
@@ -220,8 +277,12 @@ export default function Home() {
 
           {loadingProblems ? (
             <div className="text-center text-gray-500">Loading problems...</div>
+          ) : filteredProblems.length === 0 ? (
+            <div className="text-center rounded-2xl bg-white border border-gray-200 p-8 text-gray-600">
+              해당하는 문제가 없습니다.
+            </div>
           ) : (
-            <ProblemList problems={problems} onVote={voteRating} loading={loading} />
+            <ProblemList problems={filteredProblems} onVote={voteRating} loading={loading} />
           )}
         </>
       )}
