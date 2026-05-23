@@ -1,23 +1,29 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 
+// 🔥 크롬 익스텐션 통신 허용을 위한 공통 CORS 헤더 선언
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*', // 모든 도메인(익스텐션 환경)에서의 접근을 허용
+  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+}
+
 export async function GET(
   request: Request,
-  { params }: { params: Promise<{ id: string }> } // 1. 타입을 Promise로 감싸줍니다.
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  // 2. params 객체를 await를 통해 언랩(Unwrap)합니다.
   const { id } = await params 
   const problemId = Number(id)
   
   if (isNaN(problemId)) {
     return NextResponse.json(
       { error: '올바르지 않은 문제 번호입니다.' },
-      { status: 400 }
+      { status: 400, headers: corsHeaders } // 💡 에러 응답에도 CORS 헤더 주입!
     )
   }
 
   try {
-    // 2. Supabase 'problems' 테이블에서 해당 문제 기본 정보 가져오기
+    // Supabase 'problems' 테이블에서 해당 문제 기본 정보 가져오기
     const { data: problem, error: problemError } = await supabase
       .from('problems')
       .select('*')
@@ -28,11 +34,11 @@ export async function GET(
     if (problemError || !problem) {
       return NextResponse.json(
         { error: '코이닥에 등록되지 않은 문제입니다.' },
-        { status: 404 }
+        { status: 404, headers: corsHeaders } // 💡 미등록 문제 안내를 익스텐션이 읽을 수 있게 헤더 추가!
       )
     }
 
-    // 3. Supabase 'votes' 테이블에서 이 문제에 투표된 모든 점수 가져오기
+    // Supabase 'votes' 테이블에서 이 문제에 투표된 모든 점수 가져오기
     const { data: votes, error: votesError } = await supabase
       .from('votes')
       .select('rating')
@@ -40,14 +46,13 @@ export async function GET(
 
     if (votesError) throw votesError
 
-    // 4. 평균 난이도 및 투표 수 계산 로직
+    // 평균 난이도 및 투표 수 계산 로직
     const voteCount = votes?.length || 0
     const avgRating = voteCount > 0
       ? (votes.reduce((sum, v) => sum + v.rating, 0) / voteCount).toFixed(1)
-      : '—'
+      : '0.0' // 익스텐션에서 parse하기 좋게 '0.0' 데이터로 통일해주면 더 안전합니다.
 
-    // 5. 익스텐션이 가공하기 좋게 깔끔한 JSON 형태로 응답 반환
-    // ⚠️ 중요: 크롬 익스텐션(다른 도메인)에서 이 API를 호출할 수 있도록 CORS 헤더를 열어줍니다.
+    // 익스텐션이 가공하기 좋게 깔끔한 JSON 형태로 응답 반환
     return NextResponse.json(
       {
         problem_id: problem.problem_id,
@@ -59,33 +64,25 @@ export async function GET(
       },
       {
         status: 200,
-        headers: {
-          'Access-Control-Allow-Origin': '*', // 모든 도메인(익스텐션 환경 포함)에서의 접근을 허용
-          'Access-Control-Allow-Methods': 'GET, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type',
-        },
+        headers: corsHeaders, // 💡 성공 응답 헤더 연동
       }
     )
   } catch (error) {
     console.error('KOIDAC API Error:', error)
     return NextResponse.json(
       { error: '서버 내부 오류가 발생했습니다.' },
-      { status: 500 }
+      { status: 500, headers: corsHeaders } // 💡 시스템 예외 에러 응답에도 헤더 주입
     )
   }
 }
 
-// 브라우저의 사전 요청(CORS Preflight) 처리용 OPTIONS 메서드 추가
+// 브라우저의 사전 요청(CORS Preflight) 처리용 OPTIONS 메서드
 export async function OPTIONS() {
   return NextResponse.json(
     {},
     {
       status: 200,
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
-      },
+      headers: corsHeaders, // 💡 선언해둔 공통 헤더 사용
     }
   )
 }
