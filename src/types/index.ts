@@ -13,6 +13,7 @@ export interface Comment {
   id: number
   problem_id: number
   user_id: string
+  user_nickname: string
   content: string
   created_at: string
 }

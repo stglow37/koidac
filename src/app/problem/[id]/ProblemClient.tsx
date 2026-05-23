@@ -17,6 +17,7 @@ export default function ProblemClient({ problemId }: ProblemClientProps) {
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
+  const [userNickname, setUserNickname] = useState<string>('익명') // 💡 유저 닉네임을 관리할 상태 추가
   const [commentSubmitting, setCommentSubmitting] = useState(false)
   const [voteLoading, setVoteLoading] = useState(false)
 
@@ -29,8 +30,17 @@ export default function ProblemClient({ problemId }: ProblemClientProps) {
     setLoading(true)
     setErrorMessage(null)
 
+    // 1. 현재 로그인 세션 정보 긁어오기
     const sessionResult = await supabase.auth.getSession()
-    setUserId(sessionResult.data.session?.user?.id ?? null)
+    const user = sessionResult.data.session?.user ?? null
+    
+    setUserId(user?.id ?? null)
+    
+    // 💡 Auth 메타데이터에 심어둔 닉네임 추출 (없으면 이메일 앞자리)
+    if (user) {
+      const nickname = user.user_metadata?.display_name || user.email?.split('@')[0] || '익명'
+      setUserNickname(nickname)
+    }
 
     const [{ data: problemData, error: problemError }, { data: commentsData, error: commentsError }] = await Promise.all([
       supabase.from('problems').select('*').eq('problem_id', problemId).single(),
@@ -48,8 +58,6 @@ export default function ProblemClient({ problemId }: ProblemClientProps) {
       setProblem(problemData)
     }
 
-    // Some supabase clients may return an empty object for errors.
-    // Treat falsy or empty error objects as no-error, and ensure commentsData is an array.
     if (commentsError && Object.keys(commentsError).length > 0) {
       console.error('Failed to load comments', commentsError)
       setComments([])
@@ -80,13 +88,15 @@ export default function ProblemClient({ problemId }: ProblemClientProps) {
     setErrorMessage(null)
 
     try {
+      // 2. 💡 데이터베이스 인서트 시 user_nickname도 함께 포장해서 전송
       const { data, error } = await supabase.from('comments').insert([
         {
           problem_id: problemId,
           user_id: userId,
+          user_nickname: userNickname, // 💡 닉네임 필드 추가!
           content: trimmed,
         },
-      ])
+      ]).select() // 수정한 유형 규칙에 맞춤 대응하기 위해 .select() 연계
 
       if (error) {
         throw error
@@ -257,7 +267,10 @@ export default function ProblemClient({ problemId }: ProblemClientProps) {
               comments.map((comment) => (
                 <div key={comment.id} className="rounded-3xl border border-gray-200 bg-white p-5">
                   <div className="flex items-center justify-between gap-4 text-sm text-gray-500">
-                    <span>작성자: {comment.user_id}</span>
+                    {/* 💡 3. 복잡한 UUID 대신 깔끔하고 직관적인 유저 닉네임 표기! */}
+                    <span className="font-semibold text-gray-800">
+                      작성자: {comment.user_nickname || '익명 유저'}
+                    </span>
                     <span>{new Date(comment.created_at).toLocaleString()}</span>
                   </div>
                   <p className="mt-3 text-gray-700 whitespace-pre-line">{comment.content}</p>
