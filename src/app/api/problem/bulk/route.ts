@@ -1,15 +1,13 @@
-// src/app/api/problems/bulk/route.ts
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 
-// 💡 브라우저의 CORS 완벽 통과를 위한 마스터 헤더 정의
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 }
 
-// 1. 브라우저가 사전에 날리는 OPTIONS(Preflight) 요청 완벽 처리
+// 💡 Preflight 에러 방지를 위한 OPTIONS 메서드
 export async function OPTIONS() {
   return new NextResponse(null, {
     status: 200,
@@ -17,7 +15,7 @@ export async function OPTIONS() {
   })
 }
 
-// 2. 실제 데이터 가공 처리를 담당하는 POST 핸들러
+// 💡 익스텐션의 30개 일괄 데이터를 처리할 POST 메서드
 export async function POST(request: Request) {
   try {
     const body = await request.json()
@@ -46,7 +44,7 @@ export async function POST(request: Request) {
 
     if (voteError) throw voteError
 
-    // 3. 문제 배열 데이터 가공
+    // 3. 문제 데이터 매핑 가공
     const result = problemIds.map((pId) => {
       const targetProblem = problems?.find((p) => p.problem_id === pId)
       
@@ -69,7 +67,6 @@ export async function POST(request: Request) {
       }
     })
 
-    // 💡 모든 응답 헤더에 corsHeaders를 실어서 보냅니다.
     return NextResponse.json({ data: result }, { status: 200, headers: corsHeaders })
 
   } catch (error: any) {
