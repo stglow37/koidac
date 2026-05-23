@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { AuthForm } from '@/components/AuthForm'
+import AuthForm from '@/components/AuthForm'
 import { ProblemList } from '@/components/ProblemList'
 import { useProblems } from '@/hooks/useProblems'
 
@@ -11,15 +11,15 @@ type SortCriteria = 'latest' | 'difficulty-high' | 'difficulty-low' | 'votes-hig
 
 export default function Home() {
   const [user, setUser] = useState<any>(null)
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
   const [problemId, setProblemId] = useState('')
   const [title, setTitle] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
   const [sortCriteria, setSortCriteria] = useState<SortCriteria>('latest')
+  
+  // 💡 메인 페이지의 순수 UI 알림용으로만 사용할 메시지 상태 (로딩은 전역 useProblems가 처리)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [actionLoading, setActionLoading] = useState(false)
 
   const { problems, loadingProblems, fetchProblemsWithRatings } = useProblems()
 
@@ -54,10 +54,6 @@ export default function Home() {
     })
   }, [problems, searchTerm, sortCriteria])
 
-  const baseUrl =
-    process.env.NEXT_PUBLIC_BASE_URL?.replace(/\/?$/, '') ??
-    (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000')
-
   useEffect(() => {
     async function initSession() {
       const { data } = await supabase.auth.getSession()
@@ -76,66 +72,21 @@ export default function Home() {
     return () => subscription.unsubscribe()
   }, [fetchProblemsWithRatings])
 
-  const handleSignUp = async () => {
-    if (!email || !password) {
-      setErrorMessage('Please enter both email and password.')
-      return
-    }
-
-    setLoading(true)
-    setStatusMessage(null)
-    setErrorMessage(null)
-
-    try {
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          emailRedirectTo: `${baseUrl}`,
-        },
-      })
-      if (error) throw error
-
-      setStatusMessage('Verification email sent. Please check your inbox.')
-    } catch (err) {
-      console.error('Supabase signUp error', err, { baseUrl, email })
-      setErrorMessage(err instanceof Error ? err.message : 'Sign up failed.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleSignIn = async () => {
-    if (!email || !password) {
-      setErrorMessage('Please enter both email and password.')
-      return
-    }
-
-    setLoading(true)
-    setStatusMessage(null)
-    setErrorMessage(null)
-
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) {
-      setErrorMessage('Sign in failed: ' + error.message)
-    }
-
-    setLoading(false)
-  }
+  // 💡 구형 handleSignIn, handleSignUp 로직을 싹 비워내어 충돌 원인을 원천 차단했습니다.
 
   const handleSignOut = async () => {
     await supabase.auth.signOut()
     setUser(null)
-    setStatusMessage('You have been signed out.')
-  }
+    setStatusMessage('성공적으로 로그아웃되었습니다.')
+  };
 
   const addProblem = async () => {
     if (!problemId || !title) {
-      setErrorMessage('Please enter both problem number and title.')
+      setErrorMessage('문제 번호와 제목을 모두 입력해주세요.')
       return
     }
 
-    setLoading(true)
+    setActionLoading(true)
     setStatusMessage(null)
     setErrorMessage(null)
 
@@ -149,19 +100,19 @@ export default function Home() {
       setProblemId('')
       setTitle('')
       fetchProblemsWithRatings()
-      setStatusMessage('Problem registered successfully.')
+      setStatusMessage('문제가 성공적으로 등록되었습니다.')
     }
 
-    setLoading(false)
+    setActionLoading(false)
   }
 
   const voteRating = async (pId: number, rating: number) => {
     if (!user) {
-      setErrorMessage('You need to sign in first.')
+      setErrorMessage('투표를 하려면 먼저 로그인해야 합니다.')
       return
     }
 
-    setLoading(true)
+    setActionLoading(true)
     setStatusMessage(null)
     setErrorMessage(null)
 
@@ -171,16 +122,16 @@ export default function Home() {
 
     if (error) {
       if (error.code === '23505') {
-        setErrorMessage('You already voted for this problem.')
+        setErrorMessage('이미 이 문제에 투표하셨습니다.')
       } else {
-        setErrorMessage('Vote failed: ' + error.message)
+        setErrorMessage('투표 실패: ' + error.message)
       }
     } else {
-      setStatusMessage(`${rating} points registered successfully!`)
+      setStatusMessage(`${rating}점이 정상적으로 등록되었습니다!`)
       fetchProblemsWithRatings()
     }
 
-    setLoading(false)
+    setActionLoading(false)
   }
 
   return (
@@ -189,7 +140,10 @@ export default function Home() {
         <h1 className="text-3xl font-black text-blue-900">KOI-DAC</h1>
         {user && (
           <div className="flex items-center gap-4">
-            <span className="text-sm font-medium">{user.email}</span>
+            {/* display_name이 있으면 닉네임, 없으면 이메일 출력 */}
+            <span className="text-sm font-medium">
+              {user.user_metadata?.display_name || user.email}
+            </span>
             {isAdmin && (
               <Link href="/admin" className="text-sm text-blue-600 hover:underline">
                 관리자
@@ -207,17 +161,7 @@ export default function Home() {
       </div>
 
       {!user ? (
-        <AuthForm
-          email={email}
-          password={password}
-          onEmailChange={setEmail}
-          onPasswordChange={setPassword}
-          onSignIn={handleSignIn}
-          onSignUp={handleSignUp}
-          loading={loading}
-          errorMessage={errorMessage}
-          statusMessage={statusMessage}
-        />
+        <AuthForm />
       ) : (
         <>
           <div className="bg-white shadow-sm p-6 rounded-2xl mb-10 border border-gray-100">
@@ -240,7 +184,7 @@ export default function Home() {
               <button
                 type="button"
                 onClick={addProblem}
-                disabled={loading}
+                disabled={actionLoading}
                 className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold disabled:opacity-50"
               >
                 Add
@@ -293,7 +237,7 @@ export default function Home() {
               해당하는 문제가 없습니다.
             </div>
           ) : (
-            <ProblemList problems={filteredProblems} onVote={voteRating} loading={loading} />
+            <ProblemList problems={filteredProblems} onVote={voteRating} loading={actionLoading} />
           )}
         </>
       )}
