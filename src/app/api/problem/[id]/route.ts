@@ -1,13 +1,14 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 
-// 🔥 크롬 익스텐션 통신 허용을 위한 공통 CORS 헤더 선언
+// 크롬 익스텐션 통신 허용을 위한 공통 CORS 헤더 선언 (POST 추가 허용)
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*', // 모든 도메인(익스텐션 환경)에서의 접근을 허용
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 }
 
+// 1. [GET 메서드] 문제 데이터 및 투표 현황 실시간 조회
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -18,7 +19,7 @@ export async function GET(
   if (isNaN(problemId)) {
     return NextResponse.json(
       { error: '올바르지 않은 문제 번호입니다.' },
-      { status: 400, headers: corsHeaders } // 💡 에러 응답에도 CORS 헤더 주입!
+      { status: 400, headers: corsHeaders } // 에러 응답에도 CORS 헤더 주입!
     )
   }
 
@@ -30,11 +31,11 @@ export async function GET(
       .eq('problem_id', problemId)
       .single()
 
-    // 코이닥 DB에 아직 등록되지 않은 문제일 경우 404 리턴
+    // 코이닥 DB에 아직 등록되지 않은 문제일 경우 404 리턴 ➡️ 익스텐션이 캐치하여 ?? 배지 생성
     if (problemError || !problem) {
       return NextResponse.json(
         { error: '코이닥에 등록되지 않은 문제입니다.' },
-        { status: 404, headers: corsHeaders } // 💡 미등록 문제 안내를 익스텐션이 읽을 수 있게 헤더 추가!
+        { status: 404, headers: corsHeaders } // 미등록 문제 안내를 익스텐션이 읽을 수 있게 헤더 추가!
       )
     }
 
@@ -64,14 +65,74 @@ export async function GET(
       },
       {
         status: 200,
-        headers: corsHeaders, // 💡 성공 응답 헤더 연동
+        headers: corsHeaders, // 성공 응답 헤더 연동
       }
     )
   } catch (error) {
     console.error('KOIDAC API Error:', error)
     return NextResponse.json(
       { error: '서버 내부 오류가 발생했습니다.' },
-      { status: 500, headers: corsHeaders } // 💡 시스템 예외 에러 응답에도 헤더 주입
+      { status: 500, headers: corsHeaders } // 시스템 예외 에러 응답에도 헤더 주입
+    )
+  }
+}
+
+// 2. 🔥 [POST 메서드] 익스텐션 ?? 배지 클릭 시 자동 문제 신규 등록 엔드포인트
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params
+  const problemId = Number(id)
+
+  if (isNaN(problemId)) {
+    return NextResponse.json(
+      { error: '올바르지 않은 문제 번호입니다.' },
+      { status: 400, headers: corsHeaders }
+    )
+  }
+
+  try {
+    // 크롬 익스텐션이 바디(body)에 담아 보낸 코이스터디 진짜 문제 제목 읽기
+    const body = await request.json()
+    const { title } = body
+
+    if (!title) {
+      return NextResponse.json(
+        { error: '문제 제목(title) 파라미터가 누락되었습니다.' },
+        { status: 400, headers: corsHeaders }
+      )
+    }
+
+    // Supabase의 'problems' 테이블에 문제 데이터를 즉시 인서트(Insert)
+    const { data, error } = await supabase
+      .from('problems')
+      .insert([
+        { 
+          problem_id: problemId, 
+          title: title.trim() 
+        }
+      ])
+      .select()
+      .single()
+
+    if (error) throw error
+
+    return NextResponse.json(
+      { 
+        message: '문제가 성공적으로 자동 생성되었습니다.', 
+        problem: data 
+      },
+      { 
+        status: 201, 
+        headers: corsHeaders 
+      }
+    )
+  } catch (error: any) {
+    console.error('KOIDAC API Auto Insert Error:', error)
+    return NextResponse.json(
+      { error: error.message || '데이터베이스 자동 등록 실패' },
+      { status: 500, headers: corsHeaders }
     )
   }
 }
@@ -82,7 +143,7 @@ export async function OPTIONS() {
     {},
     {
       status: 200,
-      headers: corsHeaders, // 💡 선언해둔 공통 헤더 사용
+      headers: corsHeaders, // 선언해둔 공통 헤더 사용
     }
   )
 }
