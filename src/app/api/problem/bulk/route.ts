@@ -7,72 +7,47 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 }
 
-// 💡 Preflight 에러 방지를 위한 OPTIONS 메서드
 export async function OPTIONS() {
-  return new NextResponse(null, {
-    status: 200,
-    headers: corsHeaders,
-  })
+  return new NextResponse(null, { status: 200, headers: corsHeaders })
 }
 
-// 💡 익스텐션의 30개 일괄 데이터를 처리할 POST 메서드
 export async function POST(request: Request) {
   try {
-    const body = await request.json()
-    const { problemIds } = body
+    const { problemIds } = await request.json()
 
     if (!problemIds || !Array.isArray(problemIds)) {
       return NextResponse.json(
-        { error: '올바른 문제 번호 리스트가 필요합니다.' }, 
+        { error: '올바른 문제 번호 리스트가 필요합니다.' },
         { status: 400, headers: corsHeaders }
       )
     }
 
-    // 1. DB에서 해당하는 문제 리스트 일괄 조회
-    const { data: problems, error: probError } = await supabase
-      .from('problems')
-      .select('*')
+    const { data, error } = await supabase
+      .from('problems_with_stats')
+      .select('problem_id, title, ai_tier, avg_rating, vote_count')
       .in('problem_id', problemIds)
 
-    if (probError) throw probError
+    if (error) throw error
 
-    // 2. 투표 데이터 일괄 조회
-    const { data: votes, error: voteError } = await supabase
-      .from('votes')
-      .select('problem_id, rating')
-      .in('problem_id', problemIds)
-
-    if (voteError) throw voteError
-
-    // 3. 문제 데이터 매핑 가공
-    const result = problemIds.map((pId) => {
-      const targetProblem = problems?.find((p) => p.problem_id === pId)
-      
-      if (!targetProblem) {
-        return { problem_id: pId, registered: false }
-      }
-
-      const targetVotes = votes?.filter((v) => v.problem_id === pId) || []
-      const voteCount = targetVotes.length
-      const avgRating = voteCount > 0
-        ? (targetVotes.reduce((sum, v) => sum + v.rating, 0) / voteCount).toFixed(1)
-        : '0.0'
+    const result = problemIds.map((pId: number) => {
+      const found = data?.find((p) => p.problem_id === pId)
+      if (!found) return { problem_id: pId, registered: false }
 
       return {
         problem_id: pId,
         registered: true,
-        title: targetProblem.title,
-        avgRating,
-        voteCount
+        title: found.title,
+        ai_tier: found.ai_tier ?? null,
+        avg_rating: found.avg_rating,
+        vote_count: found.vote_count,
       }
     })
 
     return NextResponse.json({ data: result }, { status: 200, headers: corsHeaders })
-
-  } catch (error: any) {
-    console.error('Bulk API Error:', error)
+  } catch (err: any) {
+    console.error('Bulk API error:', err)
     return NextResponse.json(
-      { error: error.message || '서버 오류' }, 
+      { error: err.message || '서버 오류' },
       { status: 500, headers: corsHeaders }
     )
   }

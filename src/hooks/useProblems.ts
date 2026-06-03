@@ -1,57 +1,64 @@
-import { useState, useCallback } from 'react'
+import { useCallback, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { Problem } from '@/types'
+import type { Problem, SortCriteria } from '@/types'
+
+export const PAGE_SIZE = 30
 
 export function useProblems() {
   const [problems, setProblems] = useState<Problem[]>([])
-  const [loadingProblems, setLoadingProblems] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [totalCount, setTotalCount] = useState(0)
 
-  const fetchProblemsWithRatings = useCallback(async () => {
-    setLoadingProblems(true)
+  const fetchProblems = useCallback(async (
+    search: string,
+    sort: SortCriteria,
+    page: number,
+  ) => {
+    setLoading(true)
     try {
-      const { data: problemsData, error: problemsError } = await supabase
-        .from('problems')
-        .select('*')
-        .order('created_at', { ascending: false })
+      let query = supabase
+        .from('problems_with_stats')
+        .select('*', { count: 'exact' })
 
-      if (problemsError) throw problemsError
-      if (!problemsData) {
-        setProblems([])
-        return
+      if (search.trim()) {
+        const q = search.trim()
+        const numericId = Number(q)
+        if (!isNaN(numericId) && q !== '') {
+          query = query.or(`title.ilike.%${q}%,problem_id.eq.${numericId}`)
+        } else {
+          query = query.ilike('title', `%${q}%`)
+        }
       }
 
-      const updatedProblems = await Promise.all(
-        problemsData.map(async (p: any) => {
-          const { data: votes } = await supabase
-            .from('votes')
-            .select('rating')
-            .eq('problem_id', p.problem_id)
+      switch (sort) {
+        case 'difficulty-high':
+          query = query.order('avg_rating', { ascending: false })
+          break
+        case 'difficulty-low':
+          query = query.order('avg_rating', { ascending: true })
+          break
+        case 'votes-high':
+          query = query.order('vote_count', { ascending: false })
+          break
+        default:
+          query = query.order('created_at', { ascending: false })
+      }
 
-          const avg = votes && votes.length > 0
-            ? (votes.reduce((acc, v) => acc + v.rating, 0) / votes.length).toFixed(1)
-            : '0.0'
+      query = query.range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
 
-          return {
-            ...p,
-            avgRating: avg,
-            voteCount: votes?.length || 0,
-          } as Problem
-        })
-      )
+      const { data, error, count } = await query
+      if (error) throw error
 
-      setProblems(updatedProblems)
-    } catch (error) {
-      console.error('Failed to fetch problems:', error)
+      setProblems((data as Problem[]) ?? [])
+      setTotalCount(count ?? 0)
+    } catch (err) {
+      console.error('Failed to fetch problems:', err)
       setProblems([])
+      setTotalCount(0)
     } finally {
-      setLoadingProblems(false)
+      setLoading(false)
     }
   }, [])
 
-  return {
-    problems,
-    loadingProblems,
-    fetchProblemsWithRatings,
-    setProblems,
-  }
+  return { problems, loading, totalCount, fetchProblems }
 }

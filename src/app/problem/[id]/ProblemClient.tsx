@@ -9,6 +9,15 @@ interface ProblemClientProps {
   problemId: number
 }
 
+const TIER_STYLES: Record<string, { color: string; bg: string; border: string }> = {
+  Bronze:   { color: '#92400e', bg: '#fef3c7', border: '#fde68a' },
+  Silver:   { color: '#374151', bg: '#f3f4f6', border: '#d1d5db' },
+  Gold:     { color: '#b45309', bg: '#fffbeb', border: '#fde68a' },
+  Platinum: { color: '#0f766e', bg: '#f0fdfa', border: '#99f6e4' },
+  Diamond:  { color: '#1d4ed8', bg: '#eff6ff', border: '#bfdbfe' },
+  Ruby:     { color: '#be123c', bg: '#fff1f2', border: '#fecdd3' },
+}
+
 export default function ProblemClient({ problemId }: ProblemClientProps) {
   const [problem, setProblem] = useState<Problem | null>(null)
   const [comments, setComments] = useState<Comment[]>([])
@@ -17,105 +26,109 @@ export default function ProblemClient({ problemId }: ProblemClientProps) {
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
-  const [userNickname, setUserNickname] = useState<string>('익명') // 💡 유저 닉네임을 관리할 상태 추가
+  const [userNickname, setUserNickname] = useState('익명')
   const [commentSubmitting, setCommentSubmitting] = useState(false)
   const [voteLoading, setVoteLoading] = useState(false)
 
+  const aiTierName = problem?.ai_tier?.split(' ')[0] ?? null
+  const tierStyle = aiTierName ? TIER_STYLES[aiTierName] : null
+
   const algorithmTags = useMemo(() => {
-    if (!problem?.algorithm) return []
-    return problem.algorithm.split(',').map((tag) => tag.trim()).filter(Boolean)
+    if (!problem?.ai_algorithms) return []
+    return problem.ai_algorithms.split(',').map((t) => t.trim()).filter(Boolean)
   }, [problem])
 
-  const loadPage = useCallback(async () => {
-    setLoading(true)
-    setErrorMessage(null)
-
-    // 1. 현재 로그인 세션 정보 긁어오기
-    const sessionResult = await supabase.auth.getSession()
-    const user = sessionResult.data.session?.user ?? null
-    
-    setUserId(user?.id ?? null)
-    
-    // 💡 Auth 메타데이터에 심어둔 닉네임 추출 (없으면 이메일 앞자리)
-    if (user) {
-      const nickname = user.user_metadata?.display_name || user.email?.split('@')[0] || '익명'
-      setUserNickname(nickname)
-    }
-
-    const [{ data: problemData, error: problemError }, { data: commentsData, error: commentsError }] = await Promise.all([
-      supabase.from('problems').select('*').eq('problem_id', problemId).single(),
-      supabase
-        .from('comments')
-        .select('*')
-        .eq('problem_id', problemId)
-        .order('created_at', { ascending: false }),
+  const loadProblem = useCallback(async () => {
+    const [{ data: problemData, error: problemError }, { data: commentsData }] = await Promise.all([
+      supabase.from('problems_with_stats').select('*').eq('problem_id', problemId).single(),
+      supabase.from('comments').select('*').eq('problem_id', problemId).order('created_at', { ascending: false }),
     ])
 
     if (problemError) {
-      setErrorMessage(problemError.message)
       setProblem(null)
     } else {
-      setProblem(problemData)
+      setProblem(problemData as Problem)
     }
+    setComments(Array.isArray(commentsData) ? commentsData : [])
+  }, [problemId])
 
-    if (commentsError && Object.keys(commentsError).length > 0) {
-      console.error('Failed to load comments', commentsError)
-      setComments([])
-    } else {
-      setComments(Array.isArray(commentsData) ? commentsData : [])
+  const loadVoteStats = useCallback(async () => {
+    const { data } = await supabase
+      .from('problems_with_stats')
+      .select('avg_rating, vote_count')
+      .eq('problem_id', problemId)
+      .single()
+
+    if (data) {
+      setProblem((prev) => prev ? { ...prev, avg_rating: data.avg_rating, vote_count: data.vote_count } : prev)
     }
-
-    setLoading(false)
   }, [problemId])
 
   useEffect(() => {
-    loadPage()
-  }, [loadPage])
+    async function init() {
+      setLoading(true)
+      const { data: sessionData } = await supabase.auth.getSession()
+      const user = sessionData.session?.user ?? null
+      setUserId(user?.id ?? null)
+      if (user) {
+        setUserNickname(user.user_metadata?.display_name || user.email?.split('@')[0] || '익명')
+      }
+      await loadProblem()
+      setLoading(false)
+    }
+    init()
+  }, [loadProblem])
+
+  const handleVote = async (rating: number) => {
+    if (!userId) {
+      setErrorMessage('투표는 로그인 후 이용 가능합니다.')
+      return
+    }
+    setVoteLoading(true)
+    setStatusMessage(null)
+    setErrorMessage(null)
+
+    const { error } = await supabase
+      .from('votes')
+      .insert([{ problem_id: problemId, rating, user_id: userId }])
+
+    if (error) {
+      setErrorMessage(error.code === '23505' ? '이미 이 문제에 투표하셨습니다.' : error.message)
+    } else {
+      setStatusMessage(`${rating}점 투표가 등록되었습니다.`)
+      await loadVoteStats()
+    }
+    setVoteLoading(false)
+  }
 
   const addComment = async () => {
     const trimmed = commentText.trim()
-    if (!trimmed) {
-      setErrorMessage('댓글을 입력해주세요.')
-      return
-    }
-    if (!userId) {
-      setErrorMessage('댓글 작성은 로그인이 필요합니다.')
-      return
-    }
+    if (!trimmed) { setErrorMessage('댓글을 입력해주세요.'); return }
+    if (!userId) { setErrorMessage('댓글 작성은 로그인이 필요합니다.'); return }
 
     setCommentSubmitting(true)
     setStatusMessage(null)
     setErrorMessage(null)
 
-    try {
-      // 2. 💡 데이터베이스 인서트 시 user_nickname도 함께 포장해서 전송
-      const { data, error } = await supabase.from('comments').insert([
-        {
-          problem_id: problemId,
-          user_id: userId,
-          user_nickname: userNickname, // 💡 닉네임 필드 추가!
-          content: trimmed,
-        },
-      ]).select() // 수정한 유형 규칙에 맞춤 대응하기 위해 .select() 연계
+    const { data, error } = await supabase
+      .from('comments')
+      .insert([{ problem_id: problemId, user_id: userId, user_nickname: userNickname, content: trimmed }])
+      .select()
 
-      if (error) {
-        throw error
-      }
-
+    if (error) {
+      setErrorMessage(error.message)
+    } else {
       setCommentText('')
       setComments((prev) => [...(data ?? []), ...prev])
       setStatusMessage('댓글이 등록되었습니다.')
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : '댓글 등록 중 오류가 발생했습니다.')
-    } finally {
-      setCommentSubmitting(false)
     }
+    setCommentSubmitting(false)
   }
 
   if (loading) {
     return (
       <main className="p-8 min-h-screen bg-gray-50 text-black">
-        <div className="max-w-4xl mx-auto text-center py-24 text-gray-500">로딩 중입니다...</div>
+        <div className="max-w-4xl mx-auto text-center py-24 text-gray-500">로딩 중...</div>
       </main>
     )
   }
@@ -125,12 +138,8 @@ export default function ProblemClient({ problemId }: ProblemClientProps) {
       <main className="p-8 min-h-screen bg-gray-50 text-black">
         <div className="max-w-4xl mx-auto rounded-3xl border border-gray-200 bg-white p-10 text-center shadow-sm">
           <p className="text-lg font-semibold text-gray-900">문제를 불러올 수 없습니다.</p>
-          <p className="mt-3 text-sm text-gray-600">해당 문제 번호가 없거나 서버 오류가 발생했습니다.</p>
-          <div className="mt-6">
-            <Link href="/" className="text-blue-600 hover:underline">
-              ← 목록으로 돌아가기
-            </Link>
-          </div>
+          <p className="mt-2 text-sm text-gray-500">해당 문제 번호가 없거나 아직 등록되지 않은 문제입니다.</p>
+          <Link href="/" className="mt-6 inline-block text-blue-600 hover:underline">← 목록으로 돌아가기</Link>
         </div>
       </main>
     )
@@ -139,99 +148,75 @@ export default function ProblemClient({ problemId }: ProblemClientProps) {
   return (
     <main className="p-8 min-h-screen bg-gray-50 text-black">
       <div className="max-w-4xl mx-auto space-y-6">
-        <Link href="/" className="text-sm text-blue-600 hover:underline">
-          ← 목록으로 돌아가기
-        </Link>
+        <Link href="/" className="text-sm text-blue-600 hover:underline">← 목록으로 돌아가기</Link>
 
         <section className="bg-white border border-gray-200 rounded-3xl p-8 shadow-sm">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">문제 {problemId}</h1>
-              <p className="mt-2 text-sm text-gray-500">문제 상세 페이지에서 정보와 토론을 관리합니다.</p>
+          <div className="flex flex-col gap-2 mb-6">
+            <p className="text-sm text-gray-400">#{problem.problem_id}</p>
+            <h1 className="text-2xl font-bold text-gray-900">{problem.title}</h1>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 mb-8">
+            <div className="rounded-2xl p-5 text-center"
+              style={tierStyle
+                ? { background: tierStyle.bg, borderColor: tierStyle.border, border: '1px solid' }
+                : { background: '#f9fafb', border: '1px solid #e5e7eb' }}>
+              <div className="text-xs uppercase tracking-widest mb-1"
+                style={{ color: tierStyle?.color ?? '#9ca3af' }}>
+                AI 추정 난이도
+              </div>
+              <div className="text-3xl font-black"
+                style={{ color: tierStyle?.color ?? '#9ca3af' }}>
+                {problem.ai_tier ?? '?'}
+              </div>
+              {problem.ai_reasoning && (
+                <p className="mt-2 text-xs text-gray-500">{problem.ai_reasoning}</p>
+              )}
             </div>
-            <div className="rounded-3xl bg-blue-50 px-5 py-4 text-center">
-              <div className="text-xs uppercase tracking-[0.2em] text-blue-700">평균 난이도</div>
-              <div className="mt-2 text-4xl font-bold text-blue-900">{problem?.avgRating ?? '—'}</div>
+
+            <div className="rounded-2xl bg-blue-50 p-5 text-center border border-blue-100">
+              <div className="text-xs uppercase tracking-widest text-blue-600 mb-1">유저 평균 난이도</div>
+              <div className="text-3xl font-black text-blue-900">
+                {problem.avg_rating > 0 ? problem.avg_rating.toFixed(1) : '—'}
+              </div>
+              <div className="mt-1 text-xs text-blue-500">{problem.vote_count}명 투표</div>
             </div>
           </div>
 
-          <div className="mt-8 grid gap-6 lg:grid-cols-[2fr_1fr]">
-            <div className="space-y-6">
-              <div>
-                <h2 className="text-xl font-semibold text-gray-900">문제 제목</h2>
-                <p className="mt-2 text-lg font-bold text-gray-800">{problem?.title ?? '정보 없음'}</p>
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-gray-500">설명</h3>
-                <p className="mt-3 text-gray-700 whitespace-pre-line">{problem?.description ?? '설명 정보가 없습니다.'}</p>
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-gray-500">알고리즘 태그</h3>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {algorithmTags.length > 0 ? (
-                    algorithmTags.map((tag) => (
-                      <span key={tag} className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-sm text-gray-700">
-                        {tag}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-sm text-gray-500">태그가 등록되어 있지 않습니다.</span>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-3xl bg-gray-50 p-6">
-              <h3 className="text-lg font-semibold text-gray-900">투표</h3>
-              <p className="mt-2 text-sm text-gray-600">1~5점으로 난이도를 평가하세요.</p>
-              <div className="mt-5 grid grid-cols-5 gap-2">
-                {[1, 2, 3, 4, 5].map((rating) => (
-                  <button
-                    key={rating}
-                    type="button"
-                    disabled={voteLoading}
-                    className="rounded-2xl border border-gray-300 bg-white px-3 py-3 text-sm font-semibold text-gray-700 hover:bg-blue-50 disabled:opacity-50"
-                    onClick={async () => {
-                      if (!userId) {
-                        setErrorMessage('투표는 로그인 후 이용 가능합니다.')
-                        return
-                      }
-
-                      setVoteLoading(true)
-                      setStatusMessage(null)
-                      setErrorMessage(null)
-
-                      try {
-                        const { error } = await supabase.from('votes').insert([
-                          { problem_id: problemId, rating, user_id: userId },
-                        ])
-
-                        if (error) {
-                          throw error
-                        }
-
-                        setStatusMessage(`${rating}점 투표가 등록되었습니다.`)
-                        await loadPage()
-                      } catch (error) {
-                        setErrorMessage(error instanceof Error ? error.message : '투표 중 오류가 발생했습니다.')
-                      } finally {
-                        setVoteLoading(false)
-                      }
-                    }}
-                  >
-                    {rating}
-                  </button>
+          {algorithmTags.length > 0 && (
+            <div className="mb-8">
+              <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">AI 추정 알고리즘</h3>
+              <div className="flex flex-wrap gap-2">
+                {algorithmTags.map((tag) => (
+                  <span key={tag} className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-sm text-gray-700">
+                    {tag}
+                  </span>
                 ))}
               </div>
+            </div>
+          )}
+
+          <div className="rounded-2xl bg-gray-50 p-6">
+            <h3 className="text-sm font-semibold text-gray-700 mb-4">난이도 투표 (1~5점)</h3>
+            <div className="grid grid-cols-5 gap-2">
+              {[1, 2, 3, 4, 5].map((rating) => (
+                <button
+                  key={rating}
+                  type="button"
+                  disabled={voteLoading}
+                  onClick={() => handleVote(rating)}
+                  className="rounded-2xl border border-gray-300 bg-white py-3 text-sm font-semibold text-gray-700 hover:bg-yellow-50 hover:border-yellow-300 disabled:opacity-50"
+                >
+                  {rating}
+                </button>
+              ))}
             </div>
           </div>
         </section>
 
         <section className="space-y-4">
-          <div>
-            <h2 className="text-xl font-semibold text-gray-900">댓글</h2>
-            <p className="mt-2 text-sm text-gray-500">다른 사람들과 힌트를 공유하거나 질문할 수 있습니다.</p>
-          </div>
+          <h2 className="text-xl font-semibold text-gray-900">댓글</h2>
+          <p className="text-sm text-gray-500">힌트를 공유하거나 질문할 수 있습니다.</p>
 
           {statusMessage && (
             <div className="rounded-2xl bg-green-50 border border-green-200 p-4 text-sm text-green-800">{statusMessage}</div>
@@ -244,21 +229,21 @@ export default function ProblemClient({ problemId }: ProblemClientProps) {
             <textarea
               rows={4}
               value={commentText}
-              onChange={(event) => setCommentText(event.target.value)}
+              onChange={(e) => setCommentText(e.target.value)}
               placeholder="댓글을 입력하세요."
-              className="w-full rounded-3xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-800 focus:border-blue-400 focus:outline-none"
+              className="w-full rounded-2xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-800 focus:border-blue-400 focus:outline-none"
             />
             <button
               type="button"
               onClick={addComment}
               disabled={commentSubmitting}
-              className="mt-4 rounded-3xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+              className="mt-4 rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
             >
               댓글 등록
             </button>
           </div>
 
-          <div className="space-y-4">
+          <div className="space-y-3">
             {comments.length === 0 ? (
               <div className="rounded-3xl border border-dashed border-gray-300 bg-white p-8 text-center text-gray-500">
                 아직 등록된 댓글이 없습니다.
@@ -266,11 +251,8 @@ export default function ProblemClient({ problemId }: ProblemClientProps) {
             ) : (
               comments.map((comment) => (
                 <div key={comment.id} className="rounded-3xl border border-gray-200 bg-white p-5">
-                  <div className="flex items-center justify-between gap-4 text-sm text-gray-500">
-                    {/* 💡 3. 복잡한 UUID 대신 깔끔하고 직관적인 유저 닉네임 표기! */}
-                    <span className="font-semibold text-gray-800">
-                      작성자: {comment.user_nickname || '익명 유저'}
-                    </span>
+                  <div className="flex items-center justify-between text-sm text-gray-500">
+                    <span className="font-semibold text-gray-800">{comment.user_nickname}</span>
                     <span>{new Date(comment.created_at).toLocaleString()}</span>
                   </div>
                   <p className="mt-3 text-gray-700 whitespace-pre-line">{comment.content}</p>

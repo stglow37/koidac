@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "KOIDAC - 코이스터디 난이도 연동",
+  "version": "1.0.1",
+  "description": "코이스터디 문제 페이지에 KOIDAC 난이도 티어와 정보를 표시합니다.",
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://koidac.vercel.app/*"
+  ],
+  "optional_permissions": [],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.koistudy.net/prob_page?NO=*",
+        "*://koistudy.net/prob_page?NO=*",
+        "*://*.koistudy.net/problems*",
+        "*://koistudy.net/problems*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ]
+}
