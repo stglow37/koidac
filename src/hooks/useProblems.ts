@@ -8,6 +8,7 @@ export function useProblems() {
   const [problems, setProblems] = useState<Problem[]>([])
   const [loading, setLoading] = useState(false)
   const [totalCount, setTotalCount] = useState(0)
+  const [error, setError] = useState<string | null>(null)
 
   const fetchProblems = useCallback(async (
     search: string,
@@ -15,6 +16,7 @@ export function useProblems() {
     page: number,
   ) => {
     setLoading(true)
+    setError(null)
     try {
       let query = supabase
         .from('problems_with_stats')
@@ -23,7 +25,7 @@ export function useProblems() {
       if (search.trim()) {
         const q = search.trim()
         const numericId = Number(q)
-        if (!isNaN(numericId) && q !== '') {
+        if (!isNaN(numericId)) {
           query = query.or(`title.ilike.%${q}%,problem_id.eq.${numericId}`)
         } else {
           query = query.ilike('title', `%${q}%`)
@@ -46,13 +48,13 @@ export function useProblems() {
 
       query = query.range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
 
-      const { data, error, count } = await query
-      if (error) throw error
+      const { data, error: queryError, count } = await query
+      if (queryError) throw queryError
 
       setProblems((data as Problem[]) ?? [])
       setTotalCount(count ?? 0)
     } catch (err) {
-      console.error('Failed to fetch problems:', err)
+      setError((err as Error).message)
       setProblems([])
       setTotalCount(0)
     } finally {
@@ -60,5 +62,5 @@ export function useProblems() {
     }
   }, [])
 
-  return { problems, loading, totalCount, fetchProblems }
+  return { problems, loading, totalCount, error, fetchProblems }
 }

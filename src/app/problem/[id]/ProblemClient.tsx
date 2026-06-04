@@ -3,19 +3,11 @@
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { getTierStyle, parseTierName } from '@/lib/tiers'
 import type { Comment, Problem } from '@/types'
 
 interface ProblemClientProps {
   problemId: number
-}
-
-const TIER_STYLES: Record<string, { color: string; bg: string; border: string }> = {
-  Bronze:   { color: '#92400e', bg: '#fef3c7', border: '#fde68a' },
-  Silver:   { color: '#374151', bg: '#f3f4f6', border: '#d1d5db' },
-  Gold:     { color: '#b45309', bg: '#fffbeb', border: '#fde68a' },
-  Platinum: { color: '#0f766e', bg: '#f0fdfa', border: '#99f6e4' },
-  Diamond:  { color: '#1d4ed8', bg: '#eff6ff', border: '#bfdbfe' },
-  Ruby:     { color: '#be123c', bg: '#fff1f2', border: '#fecdd3' },
 }
 
 export default function ProblemClient({ problemId }: ProblemClientProps) {
@@ -30,13 +22,25 @@ export default function ProblemClient({ problemId }: ProblemClientProps) {
   const [commentSubmitting, setCommentSubmitting] = useState(false)
   const [voteLoading, setVoteLoading] = useState(false)
 
-  const aiTierName = problem?.ai_tier?.split(' ')[0] ?? null
-  const tierStyle = aiTierName ? TIER_STYLES[aiTierName] : null
+  const tierName = parseTierName(problem?.ai_tier)
+  const tierStyle = getTierStyle(tierName)
 
   const algorithmTags = useMemo(() => {
     if (!problem?.ai_algorithms) return []
     return problem.ai_algorithms.split(',').map((t) => t.trim()).filter(Boolean)
   }, [problem])
+
+  useEffect(() => {
+    if (!statusMessage) return
+    const id = setTimeout(() => setStatusMessage(null), 3000)
+    return () => clearTimeout(id)
+  }, [statusMessage])
+
+  useEffect(() => {
+    if (!errorMessage) return
+    const id = setTimeout(() => setErrorMessage(null), 5000)
+    return () => clearTimeout(id)
+  }, [errorMessage])
 
   const loadProblem = useCallback(async () => {
     const [{ data: problemData, error: problemError }, { data: commentsData }] = await Promise.all([
@@ -44,11 +48,7 @@ export default function ProblemClient({ problemId }: ProblemClientProps) {
       supabase.from('comments').select('*').eq('problem_id', problemId).order('created_at', { ascending: false }),
     ])
 
-    if (problemError) {
-      setProblem(null)
-    } else {
-      setProblem(problemData as Problem)
-    }
+    setProblem(problemError ? null : (problemData as Problem))
     setComments(Array.isArray(commentsData) ? commentsData : [])
   }, [problemId])
 
@@ -157,16 +157,14 @@ export default function ProblemClient({ problemId }: ProblemClientProps) {
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2 mb-8">
-            <div className="rounded-2xl p-5 text-center"
-              style={tierStyle
-                ? { background: tierStyle.bg, borderColor: tierStyle.border, border: '1px solid' }
-                : { background: '#f9fafb', border: '1px solid #e5e7eb' }}>
-              <div className="text-xs uppercase tracking-widest mb-1"
-                style={{ color: tierStyle?.color ?? '#9ca3af' }}>
+            <div
+              className="rounded-2xl p-5 text-center"
+              style={{ background: tierStyle.bg, border: `1px solid ${tierStyle.border}` }}
+            >
+              <div className="text-xs uppercase tracking-widest mb-1" style={{ color: tierStyle.color }}>
                 AI 추정 난이도
               </div>
-              <div className="text-3xl font-black"
-                style={{ color: tierStyle?.color ?? '#9ca3af' }}>
+              <div className="text-3xl font-black" style={{ color: tierStyle.color }}>
                 {problem.ai_tier ?? '?'}
               </div>
               {problem.ai_reasoning && (
@@ -253,7 +251,7 @@ export default function ProblemClient({ problemId }: ProblemClientProps) {
                 <div key={comment.id} className="rounded-3xl border border-gray-200 bg-white p-5">
                   <div className="flex items-center justify-between text-sm text-gray-500">
                     <span className="font-semibold text-gray-800">{comment.user_nickname}</span>
-                    <span>{new Date(comment.created_at).toLocaleString()}</span>
+                    <span>{new Date(comment.created_at).toLocaleString('ko-KR')}</span>
                   </div>
                   <p className="mt-3 text-gray-700 whitespace-pre-line">{comment.content}</p>
                 </div>

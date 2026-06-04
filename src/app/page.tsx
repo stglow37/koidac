@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { useEffect, useState, useCallback } from 'react'
+import type { User } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 import AuthForm from '@/components/AuthForm'
 import { ProblemList } from '@/components/ProblemList'
@@ -9,15 +10,15 @@ import { useProblems, PAGE_SIZE } from '@/hooks/useProblems'
 import type { SortCriteria } from '@/types'
 
 export default function Home() {
-  const [user, setUser] = useState<any>(null)
+  const [user, setUser] = useState<User | null>(null)
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<SortCriteria>('latest')
   const [page, setPage] = useState(0)
-  const [actionLoading, setActionLoading] = useState(false)
+  const [votingId, setVotingId] = useState<number | null>(null)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
-  const { problems, loading, totalCount, fetchProblems } = useProblems()
+  const { problems, loading, totalCount, error: fetchError, fetchProblems } = useProblems()
 
   const totalPages = Math.ceil(totalCount / PAGE_SIZE)
 
@@ -44,6 +45,18 @@ export default function Home() {
     load()
   }, [load])
 
+  useEffect(() => {
+    if (!statusMessage) return
+    const id = setTimeout(() => setStatusMessage(null), 3000)
+    return () => clearTimeout(id)
+  }, [statusMessage])
+
+  useEffect(() => {
+    if (!errorMessage) return
+    const id = setTimeout(() => setErrorMessage(null), 5000)
+    return () => clearTimeout(id)
+  }, [errorMessage])
+
   const handleSignOut = async () => {
     await supabase.auth.signOut()
     setUser(null)
@@ -54,7 +67,7 @@ export default function Home() {
       setErrorMessage('투표를 하려면 먼저 로그인해야 합니다.')
       return
     }
-    setActionLoading(true)
+    setVotingId(problemId)
     setStatusMessage(null)
     setErrorMessage(null)
 
@@ -68,7 +81,7 @@ export default function Home() {
       setStatusMessage(`${rating}점이 등록되었습니다!`)
       load()
     }
-    setActionLoading(false)
+    setVotingId(null)
   }
 
   const handleSearchChange = (value: string) => {
@@ -144,15 +157,15 @@ export default function Home() {
               {statusMessage}
             </div>
           )}
-          {errorMessage && (
+          {(errorMessage || fetchError) && (
             <div className="mb-4 rounded-xl bg-red-50 border border-red-200 p-4 text-sm text-red-800">
-              {errorMessage}
+              {errorMessage ?? fetchError}
             </div>
           )}
 
           {loading ? (
-            <div className="text-center text-gray-500 py-16">Loading...</div>
-          ) : problems.length === 0 ? (
+            <div className="text-center text-gray-500 py-16">로딩 중...</div>
+          ) : problems.length === 0 && !fetchError ? (
             <div className="text-center rounded-2xl bg-white border border-gray-200 p-8 text-gray-600">
               해당하는 문제가 없습니다.
             </div>
@@ -161,7 +174,7 @@ export default function Home() {
               <div className="mb-3 text-sm text-gray-500">
                 총 {totalCount.toLocaleString()}개 문제
               </div>
-              <ProblemList problems={problems} onVote={handleVote} loading={actionLoading} />
+              <ProblemList problems={problems} onVote={handleVote} votingId={votingId} />
               {totalPages > 1 && (
                 <div className="mt-8 flex justify-center items-center gap-2">
                   <button

@@ -39,23 +39,42 @@ try {
   process.exit(1)
 }
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
-const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-const GEMINI_KEY   = process.env.GEMINI_API_KEY
+const SUPABASE_URL          = process.env.NEXT_PUBLIC_SUPABASE_URL
+const SUPABASE_SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY
+const GEMINI_KEY            = process.env.GEMINI_API_KEY
 
-if (!SUPABASE_URL || !SUPABASE_KEY || !GEMINI_KEY) {
-  console.error('Missing env vars. Check NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, GEMINI_API_KEY.')
+if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY || !GEMINI_KEY) {
+  console.error('Missing env vars. Check NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GEMINI_API_KEY.')
   process.exit(1)
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
+// Service role key bypasses RLS — safe for this local batch script only, never expose to browser
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 const genAI    = new GoogleGenerativeAI(GEMINI_KEY)
-const model    = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' })
+const model    = genAI.getGenerativeModel({ model: 'gemini-3.5-flash' })
 
 const KOISTUDY_URL = 'https://koistudy.net/prob_page?NO='
-const START_ID     = 1
-const END_ID       = 5000
-const DELAY_MS     = 4200  // ~14 RPM, safely under free tier 15 RPM limit
+const DELAY_MS     = 6000  // ~10 RPM, safely under new free tier 15 RPM limit for gemini-3.5-flash
+
+// --- CLI args ---
+// node scripts/rate-problems.mjs --start 100 --end 110
+// node scripts/rate-problems.mjs --ids 1,50,200
+const args = process.argv.slice(2)
+function getArg(name) {
+  const i = args.indexOf(name)
+  return i !== -1 ? args[i + 1] : null
+}
+
+const idsArg   = getArg('--ids')
+const startArg = getArg('--start')
+const endArg   = getArg('--end')
+
+const TARGET_IDS = idsArg
+  ? idsArg.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n) && n > 0)
+  : null
+
+const START_ID = startArg ? parseInt(startArg, 10) : 1
+const END_ID   = endArg   ? parseInt(endArg,   10) : 5000
 
 const PROMPT_SYSTEM = `당신은 competitive programming 전문가입니다.
 주어진 문제를 분석하여 solved.ac 기준 난이도를 평가해주세요.
@@ -107,7 +126,7 @@ async function scrapeStatement(problemId) {
   }
 }
 
-async function rateWithGemini(title, statement) {
+async function rateWithGemini(title, statement, attempt = 0) {
   const content = statement
     ? `제목: ${title}\n\n${statement}`
     : `제목: ${title}\n\n(문제 내용 없음 — 제목만으로 추정)`
@@ -132,13 +151,24 @@ ${content}
     if (parsed.level < 1 || parsed.level > 5) return null
 
     return parsed
-  } catch {
+  } catch (err) {
+    if (err.message?.includes('429') && attempt < 3) {
+      const wait = 60000 * (attempt + 1)
+      process.stdout.write(`\n  [429] Rate limited — waiting ${wait / 1000}s before retry ${attempt + 1}/3...\n`)
+      await sleep(wait)
+      return rateWithGemini(title, statement, attempt + 1)
+    }
+    process.stdout.write(`\n  [Gemini error] ${err.message}\n`)
     return null
   }
 }
 
 async function main() {
-  console.log(`Starting batch rating: problems ${START_ID}–${END_ID}`)
+  if (TARGET_IDS) {
+    console.log(`Starting batch rating: specific IDs [${TARGET_IDS.join(', ')}]`)
+  } else {
+    console.log(`Starting batch rating: problems ${START_ID}–${END_ID}`)
+  }
   console.log('Skipping problems that already have ai_tier set.\n')
 
   // Fetch all existing problem_ids that already have ai_tier
@@ -155,7 +185,12 @@ async function main() {
   let skipped   = 0
   let failed    = 0
 
-  for (let id = START_ID; id <= END_ID; id++) {
+  const ids = TARGET_IDS ?? Array.from(
+    { length: END_ID - START_ID + 1 },
+    (_, i) => START_ID + i
+  )
+
+  for (const id of ids) {
     if (alreadyRated.has(id)) {
       skipped++
       continue
@@ -209,7 +244,7 @@ async function main() {
     if (processed % 50 === 0) {
       console.log(`\n--- Progress: ${processed} processed, ${inserted} upserted, ${skipped} skipped, ${failed} failed ---\n`)
     }
-  }
+  } // end for
 
   console.log('\n=== Done ===')
   console.log(`Total processed: ${processed}`)

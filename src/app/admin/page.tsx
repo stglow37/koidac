@@ -9,6 +9,29 @@ const ADMIN_EMAILS = process.env.NEXT_PUBLIC_ADMIN_EMAILS
   ? process.env.NEXT_PUBLIC_ADMIN_EMAILS.split(',').map((e) => e.trim().toLowerCase())
   : []
 
+type ConfirmTarget = { type: 'problem'; id: number } | { type: 'comment'; id: number }
+
+async function getToken(): Promise<string | null> {
+  const { data } = await supabase.auth.getSession()
+  return data.session?.access_token ?? null
+}
+
+async function adminFetch(path: string, body: object): Promise<{ error?: string }> {
+  const token = await getToken()
+  if (!token) return { error: '세션이 만료되었습니다. 다시 로그인해주세요.' }
+
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const data = await res.json()
+    return { error: data.error || '요청 실패' }
+  }
+  return {}
+}
+
 export default function AdminPage() {
   const [userEmail, setUserEmail] = useState<string | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
@@ -17,6 +40,7 @@ export default function AdminPage() {
   const [comments, setComments] = useState<Comment[]>([])
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget | null>(null)
 
   const loadAdminData = useCallback(async () => {
     setLoading(true)
@@ -53,7 +77,7 @@ export default function AdminPage() {
     }
 
     if (commentsError) {
-      console.error('Failed to load comments', commentsError)
+      setErrorMessage((prev) => prev ?? commentsError.message)
     } else {
       setComments(commentsData ?? [])
     }
@@ -65,32 +89,39 @@ export default function AdminPage() {
     loadAdminData()
   }, [loadAdminData])
 
-  const handleDeleteProblem = async (id: number) => {
-    if (!confirm('이 문제를 삭제하시겠습니까? 관련 투표와 댓글도 모두 삭제됩니다.')) return
-    setErrorMessage(null)
-    setStatusMessage(null)
+  const handleDeleteProblem = async (problem: Problem) => {
+    if (confirmTarget?.type === 'problem' && confirmTarget.id === problem.id) {
+      setConfirmTarget(null)
+      setErrorMessage(null)
+      setStatusMessage(null)
 
-    const { error } = await supabase.from('problems').delete().eq('id', id)
-    if (error) {
-      setErrorMessage(error.message)
-      return
+      const { error } = await adminFetch('/api/admin/delete-problem', {
+        id: problem.id,
+        problemId: problem.problem_id,
+      })
+      if (error) { setErrorMessage(error); return }
+
+      setStatusMessage('문제가 삭제되었습니다.')
+      await loadAdminData()
+    } else {
+      setConfirmTarget({ type: 'problem', id: problem.id })
     }
-    setStatusMessage('문제가 삭제되었습니다.')
-    await loadAdminData()
   }
 
   const handleDeleteComment = async (id: number) => {
-    if (!confirm('이 댓글을 삭제하시겠습니까?')) return
-    setErrorMessage(null)
-    setStatusMessage(null)
+    if (confirmTarget?.type === 'comment' && confirmTarget.id === id) {
+      setConfirmTarget(null)
+      setErrorMessage(null)
+      setStatusMessage(null)
 
-    const { error } = await supabase.from('comments').delete().eq('id', id)
-    if (error) {
-      setErrorMessage(error.message)
-      return
+      const { error } = await adminFetch('/api/admin/delete-comment', { id })
+      if (error) { setErrorMessage(error); return }
+
+      setStatusMessage('댓글이 삭제되었습니다.')
+      setComments((prev) => prev.filter((c) => c.id !== id))
+    } else {
+      setConfirmTarget({ type: 'comment', id })
     }
-    setStatusMessage('댓글이 삭제되었습니다.')
-    setComments((prev) => prev.filter((c) => c.id !== id))
   }
 
   if (loading) {
@@ -146,26 +177,38 @@ export default function AdminPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
-                {problems.map((problem) => (
-                  <tr key={problem.id}>
-                    <td className="px-4 py-3 text-gray-700">#{problem.problem_id}</td>
-                    <td className="px-4 py-3 text-gray-700 max-w-xs truncate">{problem.title}</td>
-                    <td className="px-4 py-3 text-gray-700">{problem.ai_tier ?? '—'}</td>
-                    <td className="px-4 py-3 text-gray-700">
-                      {problem.avg_rating > 0 ? problem.avg_rating.toFixed(1) : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-gray-700">{problem.vote_count}</td>
-                    <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteProblem(problem.id)}
-                        className="rounded-xl bg-red-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-600"
-                      >
-                        삭제
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {problems.map((problem) => {
+                  const isPending = confirmTarget?.type === 'problem' && confirmTarget.id === problem.id
+                  return (
+                    <tr key={problem.id}>
+                      <td className="px-4 py-3 text-gray-700">#{problem.problem_id}</td>
+                      <td className="px-4 py-3 text-gray-700 max-w-xs truncate">{problem.title}</td>
+                      <td className="px-4 py-3 text-gray-700">{problem.ai_tier ?? '—'}</td>
+                      <td className="px-4 py-3 text-gray-700">
+                        {problem.avg_rating > 0 ? problem.avg_rating.toFixed(1) : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-gray-700">{problem.vote_count}</td>
+                      <td className="px-4 py-3 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteProblem(problem)}
+                          className={`rounded-xl px-3 py-1.5 text-xs font-semibold text-white ${isPending ? 'bg-red-700' : 'bg-red-500 hover:bg-red-600'}`}
+                        >
+                          {isPending ? '확인?' : '삭제'}
+                        </button>
+                        {isPending && (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmTarget(null)}
+                            className="rounded-xl bg-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-300"
+                          >
+                            취소
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -179,25 +222,39 @@ export default function AdminPage() {
                 댓글이 없습니다.
               </div>
             ) : (
-              comments.map((comment) => (
-                <div key={comment.id} className="rounded-2xl border border-gray-200 bg-white p-4">
-                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between text-sm text-gray-500">
-                    <div>
-                      문제 #{comment.problem_id} ·{' '}
-                      <span className="font-medium text-gray-700">{comment.user_nickname}</span>
+              comments.map((comment) => {
+                const isPending = confirmTarget?.type === 'comment' && confirmTarget.id === comment.id
+                return (
+                  <div key={comment.id} className="rounded-2xl border border-gray-200 bg-white p-4">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between text-sm text-gray-500">
+                      <div>
+                        문제 #{comment.problem_id} ·{' '}
+                        <span className="font-medium text-gray-700">{comment.user_nickname}</span>
+                      </div>
+                      <span>{new Date(comment.created_at).toLocaleString('ko-KR')}</span>
                     </div>
-                    <span>{new Date(comment.created_at).toLocaleString()}</span>
+                    <p className="mt-2 text-gray-700 whitespace-pre-line text-sm">{comment.content}</p>
+                    <div className="mt-3 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteComment(comment.id)}
+                        className={`rounded-xl px-3 py-1.5 text-xs font-semibold text-white ${isPending ? 'bg-red-700' : 'bg-red-500 hover:bg-red-600'}`}
+                      >
+                        {isPending ? '확인?' : '삭제'}
+                      </button>
+                      {isPending && (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmTarget(null)}
+                          className="rounded-xl bg-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-300"
+                        >
+                          취소
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <p className="mt-2 text-gray-700 whitespace-pre-line text-sm">{comment.content}</p>
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteComment(comment.id)}
-                    className="mt-3 rounded-xl bg-red-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-600"
-                  >
-                    삭제
-                  </button>
-                </div>
-              ))
+                )
+              })
             )}
           </div>
         </section>

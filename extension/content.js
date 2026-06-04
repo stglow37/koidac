@@ -26,52 +26,16 @@ function showToast(message, timeout = 3000) {
   } catch (e) { /* ignore */ }
 }
 
-// Inject reusable styles for badges
-if (!document.getElementById('koidac-style')) {
-  const s = document.createElement('style');
-  s.id = 'koidac-style';
-  s.textContent = `
-    .koidac-badge { display:inline-block; font-family: 'JetBrains Mono', 'Segoe UI', monospace; font-size:11px; font-weight:800; padding:1px 4px; border-radius:3px; margin-right:6px; text-decoration:none; cursor:pointer; vertical-align:middle; line-height:1.1; transition:all .15s ease-in-out; }
-  `;
-  document.head.appendChild(s);
-}
-
-function calculateTier(avgRating) {
-  const rating = parseFloat(avgRating);
-  // 💡 평점이 없거나(NaN) 0인 경우: 회색 '??' 스타일 반환
-  if (isNaN(rating) || rating === 0) {
-    return { text: '??', color: '#64748b', bg: '#f1f5f9', border: '#cbd5e1' };
-  }
-  const fracLevel = Math.max(1, Math.min(5, 5 - Math.floor((rating % 1) * 5)));
-  if (rating < 2.0) return { text: `S${fracLevel}`, color: '#475569', bg: '#f1f5f9', border: '#cbd5e1' };
-  if (rating < 3.0) return { text: `G${fracLevel}`, color: '#d97706', bg: '#fef3c7', border: '#fde68a' };
-  if (rating < 4.0) return { text: `P${fracLevel}`, color: '#0d9488', bg: '#ccfbf1', border: '#99f6e4' };
-  return { text: `D${fracLevel}`, color: '#2563eb', bg: '#dbeafe', border: '#bfdbfe' };
-}
-
-// 2. 배지 스타일 적용 함수
-function applyBadgeStyle(element, tier) {
-  element.classList.add('koidac-badge');
-  element.innerText = tier.text;
-  element.style.color = tier.color;
-  element.style.backgroundColor = tier.bg;
-  element.style.border = `1px solid ${tier.border}`;
-  element.setAttribute('role', 'button');
-  element.setAttribute('aria-label', `KOIDAC ${tier.text}`);
-}
-
 // =============================================================
-// 🚀 [모드 1] 문제 상세 페이지 화면 (prob_page)
+// [모드 1] 문제 상세 페이지 (prob_page)
+// — .problem-container 바로 앞에 KOIDAC 정보 블록 삽입
 // =============================================================
 if (currentUrl.includes('prob_page')) {
   log('상세 페이지 감지');
   const urlParams = new URLSearchParams(window.location.search);
   const problemId = urlParams.get('NO');
-  const problemTitleHeader = document.querySelector('.title h1');
 
-  if (problemId && problemTitleHeader && !document.getElementById('koidac-tier-link')) {
-    const rawTitle = problemTitleHeader.innerText.trim();
-
+  if (problemId && !document.getElementById('koidac-info-block')) {
     fetchWithTimeout(`${KOIDAC_SERVER}/api/problem/${problemId}`)
       .then(res => {
         if (res.status === 404) throw new Error('NOT_REGISTERED');
@@ -79,41 +43,83 @@ if (currentUrl.includes('prob_page')) {
         return res.json();
       })
       .then(data => {
-        const tierLink = document.createElement('a');
-        tierLink.id = 'koidac-tier-link';
-        tierLink.href = `${KOIDAC_SERVER}/problem/${problemId}`;
-        tierLink.target = '_blank';
-        tierLink.rel = 'noopener noreferrer';
-        applyBadgeStyle(tierLink, calculateTier(data.avgRating));
-        problemTitleHeader.insertBefore(tierLink, problemTitleHeader.firstChild);
+        const problemContainer = document.querySelector('.problem-container');
+        if (!problemContainer) return;
+
+        const block = document.createElement('div');
+        block.id = 'koidac-info-block';
+        block.style.cssText = [
+          'padding:10px 15px',
+          'margin-bottom:15px',
+          'font-size:14px',
+          'line-height:1.9',
+          'background-color:#eff6ff',
+          'border-radius:6px',
+          'border:1px solid #bfdbfe',
+          'font-family:Segoe UI,system-ui,sans-serif',
+        ].join(';');
+
+        const tier = data.ai_tier || '분석 전';
+        const algos = data.ai_algorithms || '';
+        const rating = parseFloat(data.avg_rating) || 0;
+        const votes = data.vote_count || 0;
+        const ratingText = votes > 0
+          ? `★ ${rating.toFixed(1)} / 5 (${votes}명 투표)`
+          : '아직 투표 없음';
+
+        // header row
+        const header = document.createElement('div');
+        header.style.cssText = 'font-weight:700;color:#1e40af;font-size:15px;margin-bottom:4px;';
+        header.textContent = 'KOIDAC 난이도 정보';
+        block.appendChild(header);
+
+        // info row
+        const row = document.createElement('div');
+        row.style.color = '#334155';
+
+        const aiSpan = document.createElement('span');
+        aiSpan.innerHTML = `AI 티어: <strong>${tier}</strong>`;
+        row.appendChild(aiSpan);
+
+        if (algos) {
+          const sep1 = document.createElement('span');
+          sep1.style.cssText = 'margin:0 8px;color:#94a3b8;';
+          sep1.textContent = '|';
+          row.appendChild(sep1);
+
+          const algoSpan = document.createElement('span');
+          algoSpan.textContent = `알고리즘: ${algos}`;
+          row.appendChild(algoSpan);
+        }
+
+        const sep2 = document.createElement('span');
+        sep2.style.cssText = 'margin:0 8px;color:#94a3b8;';
+        sep2.textContent = '|';
+        row.appendChild(sep2);
+
+        const ratingSpan = document.createElement('span');
+        ratingSpan.textContent = `유저 평점: ${ratingText}`;
+        row.appendChild(ratingSpan);
+
+        const sep3 = document.createElement('span');
+        sep3.style.cssText = 'margin:0 8px;color:#94a3b8;';
+        sep3.textContent = '|';
+        row.appendChild(sep3);
+
+        const link = document.createElement('a');
+        link.href = `${KOIDAC_SERVER}/problem/${problemId}`;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.style.cssText = 'color:#2563eb;text-decoration:underline;';
+        link.textContent = 'KOIDAC에서 자세히 보기 →';
+        row.appendChild(link);
+
+        block.appendChild(row);
+        problemContainer.insertAdjacentElement('beforebegin', block);
       })
       .catch(err => {
         log('problem fetch error', err);
-        if (err.message === 'NOT_REGISTERED') {
-          const autoRegBtn = document.createElement('a');
-          autoRegBtn.id = 'koidac-tier-link';
-          applyBadgeStyle(autoRegBtn, { text: '??', color: '#64748b', bg: '#f1f5f9', border: '#cbd5e1' });
-
-          autoRegBtn.onclick = (e) => {
-            e.preventDefault();
-            autoRegBtn.innerText = "⏳";
-            fetchWithTimeout(`${KOIDAC_SERVER}/api/problem/${problemId}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ title: rawTitle })
-            })
-            .then(res => res.json())
-            .then(() => {
-              showToast(`[KOIDAC] ${problemId}번 문제가 자동으로 등록되었습니다!`);
-              autoRegBtn.href = `${KOIDAC_SERVER}/problem/${problemId}`;
-              autoRegBtn.target = '_blank';
-              autoRegBtn.rel = 'noopener noreferrer';
-              applyBadgeStyle(autoRegBtn, calculateTier('0.0'));
-            })
-            .catch(e => { log('auto-register error', e); showToast('KOIDAC 자동 등록에 실패했습니다.'); });
-          };
-          problemTitleHeader.insertBefore(autoRegBtn, problemTitleHeader.firstChild);
-        } else if (err.name === 'AbortError') {
+        if (err.name === 'AbortError') {
           showToast('KOIDAC: 서버 응답이 지연되고 있습니다.');
         }
       });
@@ -121,46 +127,33 @@ if (currentUrl.includes('prob_page')) {
 }
 
 // =============================================================
-// 🚀 [모드 2] 문제 목록 페이지 화면 (/problems)
+// [모드 2] 문제 목록 페이지 (/problems)
+// — 제목 링크가 있는 <td> 안에 한 줄 텍스트 추가
 // =============================================================
 else if (currentUrl.includes('/problems')) {
   log('목록 페이지 감지');
-  
+
   const rows = document.querySelectorAll('table tr');
   const problemMap = new Map();
   const problemIds = [];
 
-  rows.forEach((row, idx) => {
-    // 💡 방안 B 탑재: 칸의 순서(cells[0], cells[2])에 의존하지 않고, 
-    // 행 내부에서 'prob_page?NO=' 가 매칭되는 진짜 제목 a 태그를 다이렉트로 색출합니다.
-    const titleLink = row.querySelector('a[href*="prob_page?NO="]') || row.querySelector('a[href*="prob_page?NO="]');
-    
+  rows.forEach((row) => {
+    const titleLink = row.querySelector('a[href*="prob_page?NO="]');
     if (titleLink) {
       try {
-        // a 태그의 href 값(예: "prob_page?NO=1")에서 문제 번호만 안전하게 파싱 추출
-        const hrefValue = titleLink.getAttribute('href');
-        const match = hrefValue.match(/NO=(\d+)/);
-        
+        const match = titleLink.getAttribute('href').match(/NO=(\d+)/);
         if (match && match[1]) {
           const problemId = parseInt(match[1], 10);
-          
           if (!isNaN(problemId) && problemId > 0) {
             problemIds.push(problemId);
-            problemMap.set(problemId, {
-              container: titleLink,
-              rawTitle: titleLink.innerText.trim()
-            });
+            problemMap.set(problemId, { container: titleLink });
           }
         }
       } catch (e) {
-        console.error("[KOIDAC 디버그] 행 내부 파싱 에러 발생:", e);
+        console.error('[KOIDAC] 행 파싱 에러:', e);
       }
-    } else {
-      // 첫 행(설명 행)이나 링크가 없는 줄은 자연스럽게 로그 생략 및 패스
     }
   });
-
-  console.log("[KOIDAC 디버그] 정밀 구조 저격 후 최종 검출된 문제 번호 배열:", problemIds);
 
   if (problemIds.length > 0) {
     fetchWithTimeout(`${KOIDAC_SERVER}/api/problem/bulk`, {
@@ -174,50 +167,42 @@ else if (currentUrl.includes('/problems')) {
     })
     .then(response => {
       const serverData = response.data || [];
-      log('서버 벌크 조회 수신 수량:', serverData.length);
+      log('서버 벌크 조회 수신:', serverData.length);
 
       serverData.forEach(item => {
         const uiMap = problemMap.get(item.problem_id);
-        if (!uiMap) return;
+        if (!uiMap || !item.registered) return;
 
-        const badge = document.createElement('span');
-        
-        if (item.registered) {
-          applyBadgeStyle(badge, calculateTier(item.avgRating));
-          badge.onclick = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            window.open(`${KOIDAC_SERVER}/problem/${item.problem_id}`, '_blank');
-          };
-        } else {
-          applyBadgeStyle(badge, { text: 'X', color: '#ffffff', bg: '#1e293b', border: '#0f172a' });
-          badge.title = "KOIDAC 미등록 문제 (클릭 시 자동 등록 후 이동)";
-          badge.onclick = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            badge.innerText = "⏳";
-            badge.style.color = "#1e293b"; // 로딩 중 가독성 확보
+        const rating = parseFloat(item.avg_rating) || 0;
+        const votes = item.vote_count || 0;
+        const tier = item.ai_tier || '?';
 
-            fetchWithTimeout(`${KOIDAC_SERVER}/api/problem/${item.problem_id}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ title: uiMap.rawTitle })
-            })
-            .then(res => res.json())
-            .then(() => {
-              window.open(`${KOIDAC_SERVER}/problem/${item.problem_id}`, '_blank');
-              applyBadgeStyle(badge, calculateTier('0.0'));
-              badge.title = `KOIDAC 평점: ⭐️ 0.0 (0명 투표)`;
-              badge.onclick = (event) => { event.preventDefault(); event.stopPropagation(); window.open(`${KOIDAC_SERVER}/problem/${item.problem_id}`, '_blank'); };
-            })
-            .catch(err => { applyBadgeStyle(badge, { text: 'X', color: '#ffffff', bg: '#1e293b', border: '#0f172a' }); log('auto-register error', err); showToast('KOIDAC 자동 등록에 실패했습니다.'); });
-          };
+        const infoLine = document.createElement('div');
+        infoLine.style.cssText = [
+          'font-size:11px',
+          'color:#475569',
+          'margin-top:2px',
+          'cursor:pointer',
+          'font-family:Segoe UI,system-ui,sans-serif',
+        ].join(';');
+
+        let text = `[KOIDAC] AI: ${tier}`;
+        if (votes > 0) {
+          text += `  |  ★ ${rating.toFixed(1)} (${votes}명)`;
         }
+        infoLine.textContent = text;
 
-        uiMap.container.insertBefore(badge, uiMap.container.firstChild);
+        infoLine.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          window.open(`${KOIDAC_SERVER}/problem/${item.problem_id}`, '_blank');
+        };
+
+        uiMap.container.parentNode.appendChild(infoLine);
       });
-      log('목록 배지 렌더링 정상 완료');
+
+      log('목록 텍스트 렌더링 완료');
     })
-    .catch(err => { log(' 벌크 엔진 에러', err); });
+    .catch(err => { log('벌크 에러', err); });
   }
 }
